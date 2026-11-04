@@ -254,12 +254,32 @@ function bindConvergencePaste(){document.querySelectorAll('[data-conv-row]').for
 
 function niceStep(raw){const pow=Math.pow(10,Math.floor(Math.log10(Math.max(raw,1e-9))));const n=raw/pow;return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10)*pow;}
 function formatAxisTick(v,step){const dec=step>=1?0:Math.min(4,Math.max(0,Math.ceil(-Math.log10(step))));return v.toFixed(dec);}
+function grcAdvanceMarkers(rows,po){
+ const ro=Number(document.getElementById('ro')?.value)||Number(state.ro);
+ const advance=Number(state.advanceLength);
+ if(!(ro>0&&po>0&&Number.isFinite(advance)))return [];
+ const make=(name,rp,umax,points,color)=>{
+  if(!(Number.isFinite(rp)&&rp>=ro&&Number.isFinite(umax)&&umax>0))return null;
+  const face=Math.exp(-0.15*rp/ro)/3;
+  const ratio=advance<=0?face*Math.exp(advance/ro):1-(1-face)*Math.exp(-3*advance/(2*rp));
+  const u=umax*ratio,pi=interpolatePressureAtConvergence(points,u,po);
+  return Number.isFinite(pi)?{name,u,pi,f:Math.max(0,Math.min(1,pi/po)),color}:null;
+ };
+ const maxRp=Math.max(...rows.map(r=>Number(r.rp)).filter(Number.isFinite));
+ const maxU=Math.max(...rows.map(r=>Number(r.u)*1000).filter(Number.isFinite));
+ const result=[make('Analytical',maxRp,maxU,rows.map(r=>({u:Number(r.u)*1000,pi:Number(r.pi)})),'#b21c62')];
+ const numeric=(Array.isArray(state.convergenceInput)?state.convergenceInput:[]).map((v,i)=>({v:String(v??'').trim(),i})).filter(d=>d.v!==''&&Number.isFinite(Number(d.v))&&d.i<rows.length);
+ const nr=state.numericalPlasticRadius===''||state.numericalPlasticRadius==null?NaN:Number(state.numericalPlasticRadius);
+ if(numeric.length){const nu=Math.max(...numeric.map(d=>Number(d.v)*1000));result.push(make('Numerical',nr,nu,numeric.map(d=>({u:Number(d.v)*1000,pi:Number(rows[d.i].pi)})),'#087b4c'));}
+ return result.filter(Boolean);
+}
 function renderGRCChart(rows,po){
  const data=rows.filter(r=>Number.isFinite(r.u)&&Number.isFinite(r.pi)).map(r=>({x:r.u*1000,y:r.pi,f:po>0?r.pi/po:0,plastic:r.plastic}));
  if(data.length<2||!(po>0))return '<p class="muted">No valid curve to plot.</p>';
  const W=650,H=415,L=76,R=80,T=28,B=58,iw=W-L-R,ih=H-T-B;
  const numericXs=(Array.isArray(state.convergenceInput)?state.convergenceInput:[]).map(v=>String(v??'').trim()).filter(v=>v!==''&&Number.isFinite(Number(v))).map(v=>Number(v)*1000);
- const xmaxData=Math.max(0.01,...data.map(d=>d.x),...numericXs);
+ const advanceMarkers=grcAdvanceMarkers(rows,po);
+ const xmaxData=Math.max(0.01,...data.map(d=>d.x),...numericXs,...advanceMarkers.map(d=>d.u));
  const xminData=Math.min(0,...data.map(d=>d.x),...numericXs);
  const xlo=xminData<0?-niceStep(Math.abs(xminData)/5)*Math.ceil(Math.abs(xminData)/niceStep(Math.abs(xminData)/5)):0;
  const step=niceStep((xmaxData-xlo)/5);
@@ -279,12 +299,22 @@ function renderGRCChart(rows,po){
  g+=`<polyline points="${ordered.map(d=>xp(d.x)+','+yp(d.y)).join(' ')}" fill="none" stroke="#e45a9a" stroke-width="3.2" stroke-linejoin="round"/>`;
  for(const d of ordered)g+=`<circle cx="${xp(d.x)}" cy="${yp(d.y)}" r="2.8" fill="#e45a9a"><title>uᵢ = ${d.x.toFixed(3)} mm; Pᵢ = ${d.y.toFixed(4)} MPa; factor = ${d.f.toFixed(2)}</title></circle>`;
  if(numericData.length){const orderedNumeric=[...numericData].reverse();if(orderedNumeric.length>1)g+=`<polyline points="${orderedNumeric.map(d=>xp(d.x)+','+yp(d.y)).join(' ')}" fill="none" stroke="#179b62" stroke-width="3.2" stroke-linejoin="round"/>`;for(const d of orderedNumeric)g+=`<circle cx="${xp(d.x)}" cy="${yp(d.y)}" r="2.2" fill="#179b62"><title>Numerical Model: uᵢ = ${d.x.toFixed(3)} mm; Pᵢ = ${d.y.toFixed(4)} MPa; row ${d.i+1}</title></circle>`;}
+ // Highlight the LDP convergence and corresponding pressure relaxation factor at the selected advance length.
+ advanceMarkers.forEach((d,i)=>{
+  const cx=xp(d.u),cy=yp(d.pi),labelX=Math.min(W-R-8,Math.max(L+8,cx+(i===0?13:-13)));
+  const anchor=i===0?'start':'end';
+  const labelY=Math.max(T+84,Math.min(H-B-20,cy+(i===0?-14:26)));
+  g+=`<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${H-B}" stroke="${d.color}" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.75"/>`;
+  g+=`<circle cx="${cx}" cy="${cy}" r="7" fill="#fff" stroke="${d.color}" stroke-width="2.6"><title>${d.name} at X = ${Number(state.advanceLength).toFixed(2)} m: convergence ${d.u.toFixed(3)} mm; pressure relaxation factor ${d.f.toFixed(3)}; Pᵢ ${d.pi.toFixed(4)} MPa</title></circle>`;
+  g+=`<circle cx="${cx}" cy="${cy}" r="2.6" fill="${d.color}"/>`;
+  g+=txt(labelX,labelY,`${d.name}: ${d.u.toFixed(2)} mm; βₚ = ${d.f.toFixed(2)}`,anchor,d.color,10);
+ });
  g+=`<g aria-label="Plot legend"><rect x="${W-R-176}" y="${T+10}" width="164" height="53" rx="5" fill="#ffffff" fill-opacity="0.94" stroke="#dce3eb"/><line x1="${W-R-165}" y1="${T+26}" x2="${W-R-133}" y2="${T+26}" stroke="#e45a9a" stroke-width="3.2"/><circle cx="${W-R-149}" cy="${T+26}" r="2.8" fill="#e45a9a"/>${txt(W-R-124,T+30,'Analytical Model','start','#263c51',11)}<line x1="${W-R-165}" y1="${T+46}" x2="${W-R-133}" y2="${T+46}" stroke="#179b62" stroke-width="3.2"/><circle cx="${W-R-149}" cy="${T+46}" r="2.2" fill="#179b62"/>${txt(W-R-124,T+50,'Numerical Model','start','#263c51',11)}</g></svg>`;
  return g;
 }
 function refreshLDPChart(){
  const node=document.getElementById('ldp-chart-graphic');
- if(node&&currentGRCRows.length){const ro=Number(document.getElementById('ro')?.value)||Number(state.ro)||10;node.innerHTML=renderLDPChart(currentGRCRows,ro);const card=document.getElementById('relaxation-card');if(card)card.innerHTML=renderRelaxationCard(currentGRCRows,ro);const design=document.getElementById('design-relaxation-result');if(design)design.innerHTML=renderDesignRelaxationCard(currentGRCRows,ro);}
+ if(node&&currentGRCRows.length){const ro=Number(document.getElementById('ro')?.value)||Number(state.ro)||10;node.innerHTML=renderLDPChart(currentGRCRows,ro);const card=document.getElementById('relaxation-card');if(card)card.innerHTML=renderRelaxationCard(currentGRCRows,ro);const design=document.getElementById('design-relaxation-result');if(design)design.innerHTML=renderDesignRelaxationCard(currentGRCRows,ro);refreshGRCChart();}
 }
 function interpolatePressureAtConvergence(points, u, po){
  if(!Number.isFinite(u)||!Number.isFinite(po)||po<=0)return NaN;
@@ -345,7 +375,7 @@ function renderRelaxationCard(rows,ro){
  return `<div class="relax-card"><h3>Ground Relaxation Factor, Beta</h3><div class="relax-tables">${section('Analytical Model',maxRp,maxAnalytical,analyticalPoints)}${section('Numerical Model',numericRp,maxNumerical,numericalPoints)}</div><div class="relax-note">Pressure relaxation factor βₚ = Pᵢ/σ₁ (remaining pressure fraction); percentage relaxation = (1 − βₚ) × 100%. Pᵢ is linearly interpolated from the corresponding GRC convergence–pressure data at each LDP displacement. The numerical result requires convergence data and a plastic-zone radius. Values outside the supplied GRC convergence range are clamped to the nearest endpoint.</div></div>`;
 }
 function renderLDPChart(rows,ro){
- const W=650,H=360,L=76,R=34,T=22,B=57,pw=W-L-R,ph=H-T-B;
+ const W=650,H=380,L=76,R=34,T=22,B=76,pw=W-L-R,ph=H-T-B;
  const maxRp=Math.max(...rows.map(r=>Number(r.rp)).filter(Number.isFinite));
  const maxAnalytical=Math.max(...rows.map(r=>Number(r.u)*1000).filter(Number.isFinite));
  const numeric=(Array.isArray(state.convergenceInput)?state.convergenceInput:[]).map(v=>String(v??'').trim()).filter(v=>v!==''&&Number.isFinite(Number(v))).map(Number);
@@ -371,7 +401,29 @@ function renderLDPChart(rows,ro){
  for(const c of curves){let pts=[];for(let x=-50;x<=100;x+=1){const y=point(x,c);if(Number.isFinite(y))pts.push(`${xp(x).toFixed(2)},${yp(y).toFixed(2)}`);}
  out+=`<polyline points="${pts.join(' ')}" fill="none" stroke="${c.color}" stroke-width="3.2" stroke-linejoin="round"/>`;
  for(let x=-50;x<=100;x+=10){const y=point(x,c);out+=`<circle cx="${xp(x)}" cy="${yp(y)}" r="${c.name==='Numerical Model'?2.1:2.8}" fill="${c.color}"><title>${c.name}: x=${x} m, u=${y.toFixed(3)} mm</title></circle>`;}}
- out+=`<text x="${L+pw/2}" y="${H-12}" text-anchor="middle" font-size="12" fill="#53677b">Distance from tunnel face, X (m)</text><text transform="translate(19 ${T+ph/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#53677b">Tunnel convergence, u (mm)</text>`;
+ // Mark the selected excavation advance length and the corresponding LDP displacement.
+ const advanceX=Number(state.advanceLength);
+ if(Number.isFinite(advanceX)&&advanceX>=-50&&advanceX<=100){
+  const ax=xp(advanceX);
+  out+=`<line x1="${ax}" y1="${T}" x2="${ax}" y2="${T+ph}" stroke="#596b7f" stroke-width="1.3" stroke-dasharray="4 5" opacity="0.7"/>`;
+  const xLabel=`X = ${advanceX.toFixed(2)} m`;
+  const lx=Math.min(W-R-57,Math.max(L+57,ax));
+  out+=`<rect x="${lx-54}" y="${T+ph+27}" width="108" height="19" rx="4" fill="#f1f5f9" stroke="#d7e0e9"/><text x="${lx}" y="${T+ph+40}" text-anchor="middle" font-size="11" font-weight="600" fill="#34465a">${xLabel}</text>`;
+  const markerData=curves.map(c=>({c,displacement:point(advanceX,c)})).filter(d=>Number.isFinite(d.displacement));
+  const closeMarkers=markerData.length>1 && Math.abs(yp(markerData[0].displacement)-yp(markerData[1].displacement))<49;
+  markerData.forEach(({c,displacement},i)=>{
+   if(!Number.isFinite(displacement))return;
+   const cy=yp(displacement);
+   out+=`<line x1="${L}" y1="${cy}" x2="${ax}" y2="${cy}" stroke="${c.color}" stroke-width="1.4" stroke-dasharray="5 4" opacity="0.75"/>`;
+   out+=`<circle cx="${ax}" cy="${cy}" r="7" fill="white" stroke="${c.color}" stroke-width="2.8"><title>${c.name}: X=${advanceX.toFixed(2)} m, u=${displacement.toFixed(2)} mm</title></circle>`;
+   const label=`${c.name==='Analytical Model'?'Analytical':'Numerical'}: ${displacement.toFixed(2)} mm`;
+   const labelWidth=145, labelX=ax+labelWidth+12<W-R?ax+10:ax-labelWidth-10;
+   const offset=closeMarkers?(i===0?-49:17):(i===0?-29:10);
+   const labelY=Math.max(T+70,Math.min(T+ph-24,cy+offset));
+   out+=`<rect x="${labelX}" y="${labelY}" width="${labelWidth}" height="20" rx="4" fill="white" fill-opacity="0.96" stroke="${c.color}" stroke-opacity="0.65"/><text x="${labelX+6}" y="${labelY+14}" font-size="11" font-weight="600" fill="${c.color}">${label}</text>`;
+  });
+ }
+ out+=`<text x="${L+pw/2}" y="${H-8}" text-anchor="middle" font-size="12" fill="#53677b">Distance from tunnel face, X (m)</text><text transform="translate(19 ${T+ph/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#53677b">Tunnel convergence, u (mm)</text>`;
  out+=`<g><rect x="${W-R-170}" y="${T+9}" width="162" height="54" rx="5" fill="white" fill-opacity="0.94" stroke="#dce3eb"/>`;
  for(const [i,name,color] of [[0,'Analytical Model','#e45a9a'],[1,'Numerical Model','#179b62']]){const yy=T+26+i*21;out+=`<line x1="${W-R-159}" x2="${W-R-126}" y1="${yy}" y2="${yy}" stroke="${color}" stroke-width="3.2"/><circle cx="${W-R-143}" cy="${yy}" r="${i?2.1:2.8}" fill="${color}"/><text x="${W-R-118}" y="${yy+4}" font-size="11" fill="#263c51">${name}</text>`;}
  out+='</g></svg>';
