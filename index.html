@@ -2250,7 +2250,7 @@ function renderStability(){
  const toggle=document.getElementById('stability-project-mode'),projectPanel=document.getElementById('stability-project-data'),inputHeading=document.getElementById('stability-input-heading');
  toggle.checked=projectDataMode;projectPanel.hidden=!projectDataMode;el.hidden=projectDataMode;inputHeading.hidden=projectDataMode;
  toggle.onchange=()=>{projectDataMode=toggle.checked;projectPanel.hidden=!projectDataMode;el.hidden=projectDataMode;inputHeading.hidden=projectDataMode;if(projectDataMode)renderProjectRows(titles,charts);else projectCharts(titles,charts);updateStabilityBehaviour()};
- el.innerHTML=stabilityFields.map(([k,l])=>`<div><label>${l}</label><input data-stability="${k}" type="number" step="any" value="${escapeHtml(k==='tunnelDepth'?(state[k]??(Number(state.cover||0)+Number(state.ro||0))):(state[k]??stabilityDefaults[k]??''))}"></div>`).join('');
+ el.innerHTML=stabilityFields.map(([k,l])=>`<div><label>${l}</label><input data-stability="${k}" type="number" step="any" value="${escapeHtml(k==='tunnelDepth'?(state[k]??(Number(state.cover||0)+Number(state.ro||0))):(state[k]??stabilityDefaults[k]??''))}">${['shapeFactorA','mi','disturbance'].includes(k)?`<button type="button" class="stability-pick-button" data-pick="${k}">Select ${k==='shapeFactorA'?'shape':k==='mi'?'rock type':'disturbance'}</button>`:''}</div>`).join('');
  const titles=['3. Tangential Stress + Rock Mass Global Strength = Stability Factor (SF)','4. Stability Factor + Rock Quality (Q) = Excavation Behaviour and Tunnel Stability','2. Intact rock strength (σ<sub>ci</sub>) + GSI + Material Constant (m<sub>i</sub>) + Disturbance Factor (D) = Rock Mass (global) Strength (σ<sub>cm</sub>)','1. Rock Quality Designation (RQD) + Rock Joints Surface Condition = GSI'];
  projectCharts(titles,charts);if(projectDataMode)renderProjectRows(titles,charts);
  updateStabilityBehaviour();
@@ -2762,4 +2762,82 @@ window.addEventListener('beforeprint',makePrintReport);
  document.addEventListener('change',e=>{if(e.target.matches('[data-rock-bolt],[data-rock-bolt-factor],[data-rock-bolt-factor-choice]'))refreshRockBoltCapacityCards()});document.addEventListener('input',e=>{if(e.target.matches('[data-rock-bolt],[data-rock-bolt-factor]'))refreshRockBoltCapacityCards()});
  document.addEventListener('DOMContentLoaded',()=>{refreshRockBoltCapacityCards();const target=document.getElementById('rock-bolt-design-fields');if(target)new MutationObserver(refreshRockBoltCapacityCards).observe(target,{childList:true,subtree:true});const factors=document.getElementById('rock-bolt-factor-fields');if(factors)new MutationObserver(refreshRockBoltCapacityCards).observe(factors,{childList:true,subtree:true});});
 })();
-</script></body></html>
+</script><style>
+.stability-pick-button{margin:5px 0 0;padding:6px 10px;border:1px solid #2563eb;border-radius:6px;background:#eff6ff;color:#1d4ed8;cursor:pointer;font-size:12px;font-weight:650}
+#stability-pick-overlay{position:fixed;inset:0;z-index:999999;background:#1118279e;display:none;align-items:center;justify-content:center;padding:18px}
+#stability-pick-overlay.open{display:flex}
+#stability-pick-dialog{background:#fff;color:#142033;border-radius:12px;padding:18px;max-height:88vh;overflow:auto;width:min(850px,96vw);box-shadow:0 14px 45px #0004}
+#stability-pick-dialog header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}
+#stability-pick-dialog header button{border:0;background:#f1f5f9;border-radius:6px;padding:7px 12px;cursor:pointer}
+.stability-choice{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:10px;cursor:pointer;text-align:left}
+.stability-choice:hover,.stability-choice:focus{background:#eff6ff;border-color:#2563eb}
+.stability-choice strong{color:#1d4ed8}
+.stability-shapes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.stability-shape{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}
+.stability-mi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.stability-d{display:grid;gap:10px}
+@media print{#stability-pick-overlay,.stability-pick-button{display:none!important}}
+</style>
+<div id="stability-pick-overlay" role="presentation"><section id="stability-pick-dialog" role="dialog" aria-modal="true" aria-labelledby="stability-pick-title"><header><strong id="stability-pick-title"></strong><button type="button" id="stability-pick-close">Close ×</button></header><div id="stability-pick-options"></div></section></div>
+<script>
+(function(){
+ const overlay=document.getElementById('stability-pick-overlay'),opts=document.getElementById('stability-pick-options');
+ const title=document.getElementById('stability-pick-title');
+ const shapes=[
+  ['Vertical ellipse',5,2,'ellipse'],['Arched high',4,1.5,'arch'],['Tall horseshoe',3.9,1.8,'tall'],
+  ['Flat-top arch',3.2,2.3,'flat'],['Wide horseshoe',3.1,2.7,'wide'],['Circular',3,3,'circle'],
+  ['Horizontal ellipse',2,5,'horizontal'],['Square',1.9,1.9,'square'],['Rounded rectangle',1.8,3.9,'roundrect']
+ ];
+ const mi=[
+  ['Agglomerate',19],['Amphibolite',26],['Andesite',25],['Anhydrite',12],['Basalt',25],['Breccia',19],
+  ['Claystone',4],['Conglomerate',21],['Crystalline limestone',12],['Dacite',25],['Diabase',15],
+  ['Diorite',25],['Dolerite',16],['Dolomite',9],['Gabbro',27],['Gneiss',28],['Granite',32],
+  ['Greywacke',18],['Limestone',10],['Marble',9],['Mudstone',6],['Phyllite',7],
+  ['Quartzite',20],['Sandstone',17],['Schist',10],['Shale',6],['Siltstone',7],['Slate',9],
+  ['Tuff',13]
+ ];
+ const dOptions=[
+  [0,'TBM or carefully controlled excavation','Minimal disturbance to the confined surrounding rock mass'],
+  [0,'Mechanical or hand excavation','Minimal disturbance when blasting is avoided'],
+  [0.5,'Squeezing ground with temporary invert','Disturbance can be severe unless a temporary invert is installed'],
+  [0.8,'Very poor quality blasting','Severe local damage extending into surrounding rock mass']
+ ];
+ function glyph(k){
+  const paths={ellipse:'<ellipse cx="45" cy="38" rx="17" ry="31"/>',arch:'<path d="M25 68 V30 A20 20 0 0 1 65 30 V68 Z"/>',tall:'<path d="M25 68 V30 Q45 0 65 30 V68 Q45 78 25 68 Z"/>',flat:'<path d="M25 68 V33 Q25 18 40 18 H50 Q65 18 65 33 V68 Z"/>',wide:'<path d="M19 58 Q15 22 45 22 Q75 22 71 58 L63 69 H27 Z"/>',circle:'<circle cx="45" cy="40" r="25"/>',horizontal:'<ellipse cx="45" cy="40" rx="33" ry="19"/>',square:'<rect x="19" y="15" width="52" height="52"/>',roundrect:'<rect x="12" y="23" width="66" height="37" rx="17"/>'};
+  return '<svg viewBox="0 0 90 80" width="86" height="75" aria-hidden="true" fill="none" stroke="#334155" stroke-width="2">'+paths[k]+'</svg>';
+ }
+ function open(which){
+  overlay.classList.add('open');overlay.dataset.which=which;
+  if(which==='shapeFactorA'){
+   title.textContent='Select tunnel shape factor A (Hoek & Brown, 1980)';
+   opts.className='stability-shapes';
+   opts.innerHTML=shapes.map(([name,a,b,k])=>`<button class="stability-choice stability-shape" data-value="${a}">${glyph(k)}<span>${name}</span><strong>A = ${a.toFixed(1)}</strong><small>B = ${b.toFixed(1)}</small></button>`).join('');
+  }else if(which==='mi'){
+   title.textContent='Select Hoek–Brown intact rock constant mi';
+   opts.className='stability-mi';
+   opts.innerHTML=mi.map(([name,value])=>`<button class="stability-choice" data-value="${value}">${name} <strong>mi = ${value}</strong></button>`).join('')+
+    '<p style="grid-column:1/-1;font-size:12px">Indicative representative values only. Confirm the material constant against geological characterisation and applicable references; manual input remains available.</p>';
+  }else{
+   title.textContent='Select excavation disturbance factor D';
+   opts.className='stability-d';
+   opts.innerHTML=dOptions.map(([v,name,desc])=>`<button class="stability-choice" data-value="${v}"><strong>D = ${v}</strong> — ${name}<div style="font-size:12px;margin-top:4px">${desc}</div></button>`).join('')+
+    '<p style="font-size:12px">For tunnels, blast damage is generally localised near the excavation perimeter; do not automatically apply D to the entire rock mass.</p>';
+  }
+ }
+ function close(){overlay.classList.remove('open')}
+ document.addEventListener('click',e=>{
+  const button=e.target.closest('[data-pick]');
+  if(button){open(button.dataset.pick);return}
+  const choice=e.target.closest('#stability-pick-options [data-value]');
+  if(choice){
+   const which=overlay.dataset.which;
+   const input=document.querySelector(`[data-stability="${which}"]`);
+   if(input){input.value=choice.dataset.value;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}
+   close();return;
+  }
+  if(e.target===overlay||e.target.id==='stability-pick-close')close();
+ });
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+})();
+</script>
+</body></html>
